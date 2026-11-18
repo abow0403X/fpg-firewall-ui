@@ -292,13 +292,19 @@
     badge.className = 'badge bg-warning text-dark';
     badge.innerText = '拉取資料中...';
     try {
-      const res = await fetch(`https://api.github.com/repos/${ghOwner}/${REPO_DB}/contents/firewall_db.json`, {
-        headers: { 'Authorization': `token ${ghPat}`, 'Cache-Control': 'no-cache' }
+      const res = await fetch(`https://api.github.com/repos/${ghOwner}/${REPO_DB}/contents/firewall_db.json?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Authorization': `Bearer ${ghPat}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       dbSha = data.sha;
-      const parsed = JSON.parse(b64DecodeUnicode(data.content));
+      const cleanB64 = (data.content || '').replace(/\s/g, '');
+      const parsed = JSON.parse(b64DecodeUnicode(cleanB64));
+      localStorage.setItem('FPG_FW_DB_CACHE', JSON.stringify(parsed));
       appState.servers = parsed.servers || [];
       appState.rules = parsed.rules || [];
       
@@ -327,7 +333,11 @@
       
       const res = await fetch(`https://api.github.com/repos/${ghOwner}/${REPO_DB}/contents/firewall_db.json`, {
         method: 'PUT',
-        headers: { 'Authorization': `token ${ghPat}` },
+        headers: {
+          'Authorization': `Bearer ${ghPat}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
           message: `Update rules via WebApp: ${new Date().toLocaleString('zh-TW')}`,
           content: encodedContent,
