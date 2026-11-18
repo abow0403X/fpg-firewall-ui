@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>環境監測處｜防火牆規則管理與檢索系統</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2716/2716652.png">
+  
+  <!-- Bootstrap 5 & Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  <!-- SheetJS -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    :root { --primary-navy: #1b365d; --secondary-blue: #2c5282; --bg-light: #f4f6f9; }
+    body { background-color: var(--bg-light); font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; font-size: 0.92rem; }
+    .navbar-custom { background: linear-gradient(90deg, var(--primary-navy), var(--secondary-blue)); color: white; }
+    .server-sidebar { max-height: calc(100vh - 150px); overflow-y: auto; }
+    .server-item { cursor: pointer; border-left: 4px solid transparent; transition: all 0.15s ease; }
+    .server-item:hover { background-color: #e9ecef; }
+    .server-item.active { background-color: #e2e8f0; border-left-color: var(--primary-navy); font-weight: 600; }
+    .badge-inbound { background-color: #198754; }
+    .badge-outbound { background-color: #0d6efd; }
+    .badge-unmatched { background-color: #dc3545; }
+    .table-responsive { max-height: calc(100vh - 260px); overflow-y: auto; }
+    .table thead th { position: sticky; top: 0; background-color: #212529; color: #fff; z-index: 5; white-space: nowrap; }
+    .note-cell { background-color: #fff9db; min-width: 180px; }
+    .high-risk-row { background-color: #fff5f5 !important; }
+    .pre-line { white-space: pre-line; word-break: break-all; }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-expand-lg navbar-custom px-3 py-2 shadow-sm">
+  <div class="container-fluid">
+    <span class="navbar-brand text-white fw-bold d-flex align-items-center gap-2">
+      <i class="bi bi-shield-lock-fill fs-4"></i>
+      <span class="d-none d-sm-inline">台塑企業總管理處安衛環中心｜環境監測處防火牆管理</span>
+      <span class="d-inline d-sm-none">安衛環防火牆管理</span>
+    </span>
+    <div class="d-flex align-items-center gap-2">
+      <span id="envBadge" class="badge bg-secondary">連線中...</span>
+      <button class="btn btn-sm btn-outline-light" onclick="showAuthModal()"><i class="bi bi-person-badge"></i> 金鑰</button>
+      <button class="btn btn-sm btn-light fw-bold" onclick="openUploadModal()">
+        <i class="bi bi-file-earmark-arrow-up text-primary"></i> <span class="d-none d-sm-inline">解析匯入</span>
+      </button>
+      <button class="btn btn-sm btn-success fw-bold" onclick="openEditModal(null)">
+        <i class="bi bi-plus-lg"></i> <span class="d-none d-sm-inline">新增</span>
+      </button>
+      <button class="btn btn-sm btn-outline-light d-none d-md-inline" onclick="exportCurrentViewToExcel()">
+        <i class="bi bi-file-earmark-excel"></i> 匯出
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- Main Container -->
+<div class="container-fluid py-3">
+  <!-- Search Bar -->
+  <div class="row g-2 mb-3 align-items-center">
+    <div class="col-12 col-md-3">
+      <div class="input-group shadow-sm">
+        <span class="input-group-text bg-white"><i class="bi bi-search text-secondary"></i></span>
+        <input type="text" id="globalSearchInput" class="form-control" placeholder="全文檢索..." oninput="renderAll()">
+        <button class="btn btn-outline-secondary" onclick="clearSearch()">清除</button>
+      </div>
+    </div>
+    <div class="col-6 col-md-2">
+      <select id="locationFilter" class="form-select shadow-sm fw-bold text-primary" onchange="onLocationChange()">
+        <option value="ALL">全部位置</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-3">
+      <select id="directionFilter" class="form-select shadow-sm" onchange="renderAll()">
+        <option value="ALL">全部連線方向</option>
+        <option value="Inbound (連入)">僅顯示：Inbound (連入)</option>
+        <option value="Outbound (連出)">僅顯示：Outbound (連出)</option>
+        <option value="Unmatched (未對應/待確認)">僅顯示：待確認異常</option>
+      </select>
+    </div>
+    <div class="col-12 col-md-4 d-flex justify-content-end gap-2 overflow-auto pb-2 pb-md-0">
+      <div class="card px-2 py-1 border-0 shadow-sm bg-white text-center"><small class="text-muted">主機</small><span class="fw-bold text-dark" id="statServers">0</span></div>
+      <div class="card px-2 py-1 border-0 shadow-sm bg-white text-center"><small class="text-muted">連入</small><span class="fw-bold text-success" id="statInbound">0</span></div>
+      <div class="card px-2 py-1 border-0 shadow-sm bg-white text-center"><small class="text-muted">連出</small><span class="fw-bold text-primary" id="statOutbound">0</span></div>
+      <div class="card px-2 py-1 border-0 shadow-sm bg-white text-center"><small class="text-muted">待確認</small><span class="fw-bold text-danger" id="statUnmatched">0</span></div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <!-- Master List -->
+    <div class="col-lg-3">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-dark text-white py-2 d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-hdd-network"></i> 主機清冊</span>
+          <button class="btn btn-xs btn-outline-light py-0 px-2" style="font-size:0.8rem" onclick="selectHost('ALL')">全部</button>
+        </div>
+        <div class="list-group list-group-flush server-sidebar" id="serverListContainer"></div>
+      </div>
+    </div>
+
+    <!-- Detail Table -->
+    <div class="col-lg-9">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center border-bottom">
+          <div>
+            <span class="fw-bold text-dark fs-6" id="currentHostTitle">全部主機總覽</span>
+            <span class="badge bg-secondary ms-2" id="filteredCountBadge">0 筆</span>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover table-bordered align-middle mb-0" id="rulesTable">
+            <thead>
+              <tr>
+                <th>規則ID</th>
+                <th>方向分類</th>
+                <th>主機名稱/IP</th>
+                <th>對端 IP</th>
+                <th>開放 Port</th>
+                <th>狀態</th>
+                <th>用途說明</th>
+                <th>來源檔名</th>
+                <th>自訂備註</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="rulesTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editRuleModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title" id="editModalTitle">編輯規則與備註</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="ruleForm">
+          <input type="hidden" id="formRuleId">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">分類方向</label>
+              <select class="form-select" id="formDirection">
+                <option value="Inbound (連入)">Inbound (連入)</option>
+                <option value="Outbound (連出)">Outbound (連出)</option>
+                <option value="Unmatched (未對應/待確認)">Unmatched (待確認)</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">主機名稱</label>
+              <input type="text" class="form-control" id="formHostName" list="hostNameDatalist">
+              <datalist id="hostNameDatalist"></datalist>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">主機 IP</label>
+              <input type="text" class="form-control" id="formHostIp">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">來源端 (Source IP)</label>
+              <input type="text" class="form-control" id="formSource">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">目的端 (Destination IP)</label>
+              <input type="text" class="form-control" id="formDestination">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">開放 Port</label>
+              <input type="text" class="form-control" id="formPort">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">狀態</label>
+              <input type="text" class="form-control" id="formStatus" value="Accept">
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-bold">用途與申請說明</label>
+              <textarea class="form-control" id="formPurpose" rows="2"></textarea>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-bold text-primary"><i class="bi bi-journal-text"></i> 自訂備註 (查核/文號/稽核)</label>
+              <textarea class="form-control border-primary" id="formNote" rows="2"></textarea>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary fw-bold" onclick="submitRuleForm()">儲存並同步至 GitHub</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal fade" id="uploadExcelModal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title"><i class="bi bi-cloud-upload"></i> 上傳並解析防火牆申請單</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="file" id="excelFileInput" class="form-control mb-3" accept=".xlsx,.xls" multiple onchange="handleExcelFiles(this.files)">
+        <div id="parsedPreviewContainer" class="d-none">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-bold text-success" id="parsedSummaryText">解析結果預覽</span>
+            <button class="btn btn-sm btn-success fw-bold" onclick="confirmBatchImport()">確認寫入私有庫</button>
+          </div>
+          <div class="table-responsive" style="max-height: 350px;">
+            <table class="table table-sm table-bordered">
+              <thead class="table-light"><tr><th>來源檔案</th><th>Source</th><th>Destination</th><th>Port</th><th>用途說明</th></tr></thead>
+              <tbody id="parsedPreviewBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Auth Modal -->
+<div class="modal fade" id="authModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title">🔐 安全驗證與私有庫連線</h5>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning small">本系統已抽離敏感資料，請輸入您的 GitHub 帳號與 Token 連線至您的私有庫，確保資料 100% 掌握在您手中。</div>
+        <div class="mb-3"><label class="form-label fw-bold">GitHub 帳號 (Owner)</label><input type="text" id="authOwner" class="form-control"></div>
+        <div class="mb-3"><label class="form-label fw-bold">GitHub Token (需具備 repo 權限)</label><input type="password" id="authPat" class="form-control"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="clearAuth()">清除登入</button>
+        <button class="btn btn-primary fw-bold" onclick="saveAuthAndInit()">連線並載入資料</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  const REPO_DB = 'fpg-firewall-db';
+  let ghOwner = localStorage.getItem('FPG_GH_OWNER') || '';
+  let ghPat = localStorage.getItem('FPG_GH_PAT') || '';
+  let dbSha = '';
+  let authModal;
+
+  let appState = { servers: [], rules: [], selectedHost: 'ALL', parsedUploadQueue: [] };
+
+  window.onload = function() {
+    authModal = new bootstrap.Modal(document.getElementById('authModal'));
+    if (!ghOwner || !ghPat) authModal.show();
+    else initApp();
+  };
+
+  function showAuthModal() {
+    document.getElementById('authOwner').value = ghOwner;
+    document.getElementById('authPat').value = ghPat;
+    authModal.show();
+  }
+
+  function saveAuthAndInit() {
+    ghOwner = document.getElementById('authOwner').value.trim();
+    ghPat = document.getElementById('authPat').value.trim();
+    if(!ghOwner || !ghPat) return alert('請填寫完整資訊');
+    localStorage.setItem('FPG_GH_OWNER', ghOwner);
+    localStorage.setItem('FPG_GH_PAT', ghPat);
+    authModal.hide();
+    initApp();
+  }
+  function clearAuth() { localStorage.clear(); location.reload(); }
+
+  // Base64 UTF-8 Encoding/Decoding
+  function b64EncodeUnicode(str) {
+    return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (m, p1) => String.fromCharCode('0x' + p1)));
+  }
+  function b64DecodeUnicode(str) {
+    return decodeURIComponent(atob(str).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+  }
+
+  async function initApp() {
+    const badge = document.getElementById('envBadge');
+    badge.className = 'badge bg-warning text-dark';
+    badge.innerText = '拉取資料中...';
+    try {
+      const res = await fetch(`https://api.github.com/repos/${ghOwner}/${REPO_DB}/contents/firewall_db.json`, {
+        headers: { 'Authorization': `token ${ghPat}`, 'Cache-Control': 'no-cache' }
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      dbSha = data.sha;
+      const parsed = JSON.parse(b64DecodeUnicode(data.content));
+      appState.servers = parsed.servers || [];
+      appState.rules = parsed.rules || [];
+      
+      badge.className = 'badge bg-success';
+      badge.innerHTML = '<i class="bi bi-cloud-check-fill"></i> 已連線私有庫';
+      
+      populateLocationFilter();
+      populateDatalist();
+      renderAll();
+    } catch(e) {
+      badge.className = 'badge bg-danger';
+      badge.innerText = '連線失敗';
+      alert('無法取得私有庫資料：' + e.message + '。請確認 Token 是否有效且包含 repo 權限。');
+      authModal.show();
+    }
+  }
+
+  async function saveToGitHub() {
+    try {
+      const payloadStr = JSON.stringify({servers: appState.servers, rules: appState.rules}, null, 2);
+      const encodedContent = b64EncodeUnicode(payloadStr);
+      
+      const badge = document.getElementById('envBadge');
+      badge.className = 'badge bg-warning text-dark';
+      badge.innerText = '同步儲存中...';
+      
+      const res = await fetch(`https://api.github.com/repos/${ghOwner}/${REPO_DB}/contents/firewall_db.json`, {
+        method: 'PUT',
+        headers: { 'Authorization': `token ${ghPat}` },
+        body: JSON.stringify({
+          message: `Update rules via WebApp: ${new Date().toLocaleString('zh-TW')}`,
+          content: encodedContent,
+          sha: dbSha
+        })
+      });
+      const data = await res.json();
+      if(res.ok) {
+        dbSha = data.content.sha;
+        badge.className = 'badge bg-success';
+        badge.innerHTML = '<i class="bi bi-cloud-check-fill"></i> 同步完成';
+      } else { throw new Error(data.message); }
+    } catch(e) {
+      alert('同步失敗: ' + e.message);
+      document.getElementById('envBadge').className = 'badge bg-danger';
+      document.getElementById('envBadge').innerText = '儲存失敗';
+    }
+  }
+
+  // --- UI Rendering Logic ---
+  function populateLocationFilter() {
+    const locSelect = document.getElementById('locationFilter');
+    const locs = [...new Set(appState.servers.map(s => String(s['主機位置']).trim()).filter(Boolean))];
+    let html = '<option value="ALL">全部位置</option>';
+    locs.forEach(l => html += `<option value="${l}">📍 ${l}</option>`);
+    html += '<option value="未對應">📍 未對應</option>';
+    const currentVal = locSelect.value;
+    locSelect.innerHTML = html;
+    if([...locSelect.options].some(o => o.value === currentVal)) locSelect.value = currentVal;
+  }
+
+  function populateDatalist() {
+    document.getElementById('hostNameDatalist').innerHTML = appState.servers.map(s => `<option value="${s['主機名稱']}">${s['IP清單']} - ${s['作業機能']}</option>`).join('');
+  }
+
+  function onLocationChange() { appState.selectedHost = 'ALL'; renderAll(); }
+  function selectHost(hostName) { appState.selectedHost = hostName; renderAll(); }
+  function clearSearch() {
+    document.getElementById('globalSearchInput').value = '';
+    document.getElementById('directionFilter').value = 'ALL';
+    document.getElementById('locationFilter').value = 'ALL';
+    appState.selectedHost = 'ALL';
+    renderAll();
+  }
+
+  function getFilteredRules() {
+    const kw = document.getElementById('globalSearchInput').value.trim().toLowerCase();
+    const dir = document.getElementById('directionFilter').value;
+    const loc = document.getElementById('locationFilter').value;
+    const hostToLoc = {};
+    appState.servers.forEach(s => hostToLoc[s['主機名稱']] = s['主機位置']);
+    
+    return appState.rules.filter(r => {
+      if (appState.selectedHost !== 'ALL' && r['主機名稱'] !== appState.selectedHost) return false;
+      if (dir !== 'ALL' && r['分類方向'] !== dir) return false;
+      if (loc !== 'ALL') {
+         const rLoc = hostToLoc[r['主機名稱']] || '未對應';
+         if (rLoc !== loc) return false;
+      }
+      if (!kw) return true;
+      const searchableText = [
+        r['規則ID'], r['主機名稱'], r['主機IP'], r['對端IP或主機'],
+        r['來源端(Source)'], r['目的端(Destination)'], r['開放連接埠(Port)'],
+        r['用途與申請說明'], r['來源檔案名稱'], r['自訂備註']
+      ].join(' ').toLowerCase();
+      return searchableText.includes(kw);
+    });
+  }
+
+  function renderAll() {
+    const loc = document.getElementById('locationFilter').value;
+    const hostToLoc = {};
+    appState.servers.forEach(s => hostToLoc[s['主機名稱']] = s['主機位置']);
+
+    const srvContainer = document.getElementById('serverListContainer');
+    let srvHtml = `<div class="list-group-item server-item d-flex justify-content-between align-items-center ${appState.selectedHost === 'ALL' ? 'active' : ''}" onclick="selectHost('ALL')"><div><div class="fw-bold">全部總覽</div></div></div>`;
+
+    let visibleServers = appState.servers;
+    if (loc !== 'ALL' && loc !== '未對應') visibleServers = appState.servers.filter(s => s['主機位置'] === loc);
+    else if (loc === '未對應') visibleServers = [];
+
+    visibleServers.forEach(srv => {
+      const hName = srv['主機名稱'];
+      const inCnt = appState.rules.filter(r => r['主機名稱'] === hName && r['分類方向'].includes('Inbound')).length;
+      const outCnt = appState.rules.filter(r => r['主機名稱'] === hName && r['分類方向'].includes('Outbound')).length;
+      const isAct = appState.selectedHost === hName ? 'active' : '';
+      srvHtml += `
+        <div class="list-group-item server-item ${isAct}" onclick="selectHost('${hName}')">
+          <div class="d-flex justify-content-between align-items-center"><span class="fw-bold text-dark">${hName}</span>
+            <div><span class="badge badge-inbound">In:${inCnt}</span> <span class="badge badge-outbound">Out:${outCnt}</span></div>
+          </div>
+          <div class="small text-secondary mt-1">${srv['IP清單']}</div>
+          <div class="small text-muted text-truncate" title="${srv['作業機能']}">${srv['作業機能']}</div>
+        </div>`;
+    });
+
+    if (loc === 'ALL' || loc === '未對應') {
+      const unCnt = appState.rules.filter(r => r['主機名稱'] === '未對應清冊主機').length;
+      srvHtml += `<div class="list-group-item server-item ${appState.selectedHost === '未對應清冊主機' ? 'active' : ''}" onclick="selectHost('未對應清冊主機')"><div class="d-flex justify-content-between align-items-center"><span class="fw-bold text-danger">未對應主機</span><span class="badge badge-unmatched">${unCnt}</span></div></div>`;
+    }
+    srvContainer.innerHTML = srvHtml;
+
+    const filteredRules = getFilteredRules();
+    let visibleHostNames = new Set(filteredRules.map(r => r['主機名稱']).filter(h => h !== '未對應清冊主機'));
+    document.getElementById('statServers').innerText = visibleHostNames.size;
+    document.getElementById('statInbound').innerText = filteredRules.filter(r => r['分類方向'].includes('Inbound')).length;
+    document.getElementById('statOutbound').innerText = filteredRules.filter(r => r['分類方向'].includes('Outbound')).length;
+    document.getElementById('statUnmatched').innerText = filteredRules.filter(r => r['分類方向'].includes('Unmatched')).length;
+
+    document.getElementById('currentHostTitle').innerText = appState.selectedHost === 'ALL' ? '全部主機規則總覽' : `專屬視角：${appState.selectedHost}`;
+    document.getElementById('filteredCountBadge').innerText = `${filteredRules.length} 筆`;
+
+    const tbody = document.getElementById('rulesTableBody');
+    if (filteredRules.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-muted">無符合資料</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filteredRules.map(r => {
+      let badgeCls = 'badge-inbound';
+      if (r['分類方向'].includes('Outbound')) badgeCls = 'badge-outbound';
+      if (r['分類方向'].includes('Unmatched')) badgeCls = 'badge-unmatched';
+      
+      const peerLabel = r['分類方向'].includes('Inbound') 
+        ? `<span class="text-success fw-bold">[來源]</span><br>${escapeHtml(r['對端IP或主機'])}`
+        : (r['分類方向'].includes('Outbound') ? `<span class="text-primary fw-bold">[目的]</span><br>${escapeHtml(r['對端IP或主機'])}` : `<span class="text-danger fw-bold">[待確認]</span><br>${escapeHtml(r['對端IP或主機'])}`);
+
+      const isHighRisk = String(r['對端IP或主機']).includes('*') || String(r['對端IP或主機']).toLowerCase().includes('any');
+      return `
+        <tr class="${isHighRisk ? 'high-risk-row' : ''}">
+          <td class="fw-bold text-secondary">${escapeHtml(r['規則ID'])}</td>
+          <td><span class="badge ${badgeCls}">${escapeHtml(r['分類方向'])}</span></td>
+          <td><div class="fw-bold">${escapeHtml(r['主機名稱'])}</div><div class="small text-muted">${escapeHtml(r['主機IP'])}</div></td>
+          <td class="pre-line">${peerLabel}</td>
+          <td class="fw-bold text-dark pre-line">${escapeHtml(r['開放連接埠(Port)'])}</td>
+          <td><span class="badge bg-secondary">${escapeHtml(r['狀態'])}</span></td>
+          <td class="pre-line small">${escapeHtml(r['用途與申請說明'])}</td>
+          <td class="pre-line small text-muted">${escapeHtml(r['來源檔案名稱'])}</td>
+          <td class="note-cell pre-line small"><div class="fw-bold text-dark">${escapeHtml(r['自訂備註'] || '')}</div></td>
+          <td class="text-nowrap">
+            <button class="btn btn-sm btn-outline-primary mb-1 w-100" onclick="openEditModal('${r['規則ID']}')"><i class="bi bi-pencil-square"></i> 修改</button>
+            <button class="btn btn-sm btn-outline-danger w-100" onclick="deleteRule('${r['規則ID']}')"><i class="bi bi-trash"></i> 刪除</button>
+          </td>
+        </tr>`;
+    }).join('');
+  }
+
+  function escapeHtml(str) { return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+  // CRUD
+  const editModal = new bootstrap.Modal(document.getElementById('editRuleModal'));
+  function openEditModal(ruleId) {
+    if (!ruleId) {
+      document.getElementById('editModalTitle').innerText = '新增規則';
+      document.getElementById('ruleForm').reset();
+      document.getElementById('formRuleId').value = '';
+    } else {
+      const r = appState.rules.find(x => x['規則ID'] === ruleId);
+      if (!r) return;
+      document.getElementById('editModalTitle').innerText = `編輯 (${r['規則ID']})`;
+      document.getElementById('formRuleId').value = r['規則ID'];
+      document.getElementById('formDirection').value = r['分類方向'];
+      document.getElementById('formHostName').value = r['主機名稱'];
+      document.getElementById('formHostIp').value = r['主機IP'];
+      document.getElementById('formSource').value = r['來源端(Source)'];
+      document.getElementById('formDestination').value = r['目的端(Destination)'];
+      document.getElementById('formPort').value = r['開放連接埠(Port)'];
+      document.getElementById('formStatus').value = r['狀態'];
+      document.getElementById('formPurpose').value = r['用途與申請說明'];
+      document.getElementById('formFileName').value = r['來源檔案名稱'];
+      document.getElementById('formNote').value = r['自訂備註'] || '';
+    }
+    editModal.show();
+  }
+
+  async function submitRuleForm() {
+    const ruleId = document.getElementById('formRuleId').value;
+    const isNew = !ruleId;
+    const dir = document.getElementById('formDirection').value;
+    const src = document.getElementById('formSource').value.trim();
+    const dst = document.getElementById('formDestination').value.trim();
+    const peer = dir.includes('Inbound') ? src : (dir.includes('Outbound') ? dst : `${src} -> ${dst}`);
+
+    const ruleObj = {
+      '規則ID': ruleId, '分類方向': dir,
+      '主機名稱': document.getElementById('formHostName').value.trim(),
+      '主機IP': document.getElementById('formHostIp').value.trim(),
+      '對端IP或主機': peer, '來源端(Source)': src, '目的端(Destination)': dst,
+      '開放連接埠(Port)': document.getElementById('formPort').value.trim(),
+      '狀態': document.getElementById('formStatus').value.trim(),
+      '用途與申請說明': document.getElementById('formPurpose').value.trim(),
+      '來源檔案名稱': document.getElementById('formFileName').value.trim() || '網頁人工維護',
+      '自訂備註': document.getElementById('formNote').value.trim(),
+      '最後異動時間': new Date().toLocaleString('zh-TW', { hour12: false })
+    };
+
+    if (isNew) {
+      const maxNum = appState.rules.reduce((acc, cur) => { const n = parseInt(String(cur['規則ID']).replace('R-', ''), 10); return !isNaN(n) && n > acc ? n : acc; }, 0);
+      ruleObj['規則ID'] = 'R-' + String(maxNum + 1).padStart(4, '0');
+      appState.rules.unshift(ruleObj);
+    } else {
+      const idx = appState.rules.findIndex(x => x['規則ID'] === ruleId);
+      if (idx > -1) appState.rules[idx] = ruleObj;
+    }
+    editModal.hide();
+    renderAll();
+    await saveToGitHub();
+  }
+
+  async function deleteRule(ruleId) {
+    if (!confirm(`確定要刪除規則 ${ruleId} 嗎？此動作將直接同步至 GitHub 且無法復原。`)) return;
+    appState.rules = appState.rules.filter(x => x['規則ID'] !== ruleId);
+    renderAll();
+    await saveToGitHub();
+  }
+
+  function exportCurrentViewToExcel() {
+    const filtered = getFilteredRules();
+    if (filtered.length === 0) return alert('無資料');
+    const ws = XLSX.utils.json_to_sheet(filtered);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "查詢結果");
+    XLSX.writeFile(wb, `防火牆查詢匯出_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
+  // Upload Logic
+  const uploadModal = new bootstrap.Modal(document.getElementById('uploadExcelModal'));
+  function openUploadModal() {
+    document.getElementById('excelFileInput').value = '';
+    document.getElementById('parsedPreviewContainer').classList.add('d-none');
+    appState.parsedUploadQueue = [];
+    uploadModal.show();
+  }
+
+  async function handleExcelFiles(files) {
+    appState.parsedUploadQueue = [];
+    const skipKeywords = ['範本', '範例', '空白', '流程'];
+    for (let file of files) {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      workbook.SheetNames.forEach(sheetName => {
+        if (skipKeywords.some(kw => sheetName.includes(kw))) return;
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' });
+        for (let i = 0; i < rows.length; i++) {
+          const rowVals = rows[i].map(x => String(x).trim().toLowerCase());
+          if (rowVals.some(x => x.includes('source ip') || x.includes('來源')) && rowVals.some(x => x.includes('destination ip') || x.includes('目的'))) {
+            const srcCol = rowVals.findIndex(x => x.includes('source ip') || x.includes('來源'));
+            const dstCol = rowVals.findIndex(x => x.includes('destination ip') || x.includes('目的'));
+            const portCol = rowVals.findIndex(x => x.includes('service') || x.includes('port') || x.includes('服務') || x.includes('連接埠'));
+            const actCol = rowVals.findIndex(x => x.includes('accept') || x.includes('deny') || x.includes('狀態') || x.includes('核准'));
+            const noteCol = rowVals.findIndex(x => x.includes('備註') || x.includes('用途') || x.includes('說明'));
+            
+            let j = i + 1;
+            while (j < rows.length) {
+              const r = rows[j];
+              const serial = String(r[0] || '').trim();
+              const srcIp = srcCol > -1 ? String(r[srcCol] || '').trim() : '';
+              const dstIp = dstCol > -1 ? String(r[dstCol] || '').trim() : '';
+              if (!serial && !srcIp && !dstIp) break;
+              if (serial.includes('範例') || serial.includes('範本') || (!srcIp && !dstIp)) { j++; continue; }
+              appState.parsedUploadQueue.push({
+                fileName: `${file.name}`, sheetName: sheetName,
+                source: srcIp.replace('172.24.4.50/103.138.93.80', '172.24.4.50'),
+                destination: dstIp.replace('172.24.4.50/103.138.93.80', '172.24.4.50'),
+                port: portCol > -1 ? String(r[portCol] || '').trim() : '',
+                status: actCol > -1 ? String(r[actCol] || 'Accept').trim() : 'Accept',
+                purpose: noteCol > -1 ? String(r[noteCol] || '').trim() : '',
+                note: `由 ${sheetName} 匯入`
+              });
+              j++;
+            }
+            i = j;
+          }
+        }
+      });
+    }
+    document.getElementById('parsedPreviewContainer').classList.remove('d-none');
+    document.getElementById('parsedSummaryText').innerText = `解析出 ${appState.parsedUploadQueue.length} 筆`;
+    document.getElementById('parsedPreviewBody').innerHTML = appState.parsedUploadQueue.map(item => `<tr><td>${escapeHtml(item.fileName)}</td><td>${escapeHtml(item.source)}</td><td>${escapeHtml(item.destination)}</td><td>${escapeHtml(item.port)}</td><td>${escapeHtml(item.purpose)}</td></tr>`).join('');
+  }
+
+  async function confirmBatchImport() {
+    if (appState.parsedUploadQueue.length === 0) return;
+    const ipToServer = {};
+    const nameToServer = {};
+    appState.servers.forEach(s => {
+      const sName = s['主機名稱'];
+      const ips = String(s['IP清單']).split('、').map(x => x.trim()).filter(Boolean);
+      nameToServer[sName] = { name: sName, ips: ips };
+      ips.forEach(ip => ipToServer[ip] = { name: sName, ip: ip });
+    });
+
+    let maxNum = appState.rules.reduce((acc, cur) => { const n = parseInt(String(cur['規則ID']).replace('R-', ''), 10); return !isNaN(n) && n > acc ? n : acc; }, 0);
+    const nowStr = new Date().toLocaleString('zh-TW', { hour12: false });
+
+    appState.parsedUploadQueue.forEach(item => {
+      const srcClean = item.source.split('(')[0].trim();
+      const dstClean = item.destination.split('(')[0].trim();
+      let matched = false;
+      if (ipToServer[dstClean] || nameToServer[dstClean]) {
+        const srv = ipToServer[dstClean] || { name: nameToServer[dstClean].name, ip: nameToServer[dstClean].ips[0] || dstClean };
+        maxNum++;
+        appState.rules.unshift({
+          '規則ID': 'R-' + String(maxNum).padStart(4, '0'), '分類方向': 'Inbound (連入)',
+          '主機名稱': srv.name, '主機IP': srv.ip, '對端IP或主機': item.source, '來源端(Source)': item.source, '目的端(Destination)': srv.ip,
+          '開放連接埠(Port)': item.port, '狀態': item.status, '用途與申請說明': item.purpose, '來源檔案名稱': item.fileName, '自訂備註': item.note, '最後異動時間': nowStr
+        });
+        matched = true;
+      }
+      if (ipToServer[srcClean] || nameToServer[srcClean]) {
+        const srv = ipToServer[srcClean] || { name: nameToServer[srcClean].name, ip: nameToServer[srcClean].ips[0] || srcClean };
+        maxNum++;
+        appState.rules.unshift({
+          '規則ID': 'R-' + String(maxNum).padStart(4, '0'), '分類方向': 'Outbound (連出)',
+          '主機名稱': srv.name, '主機IP': srv.ip, '對端IP或主機': item.destination, '來源端(Source)': srv.ip, '目的端(Destination)': item.destination,
+          '開放連接埠(Port)': item.port, '狀態': item.status, '用途與申請說明': item.purpose, '來源檔案名稱': item.fileName, '自訂備註': item.note, '最後異動時間': nowStr
+        });
+        matched = true;
+      }
+      if (!matched) {
+        maxNum++;
+        appState.rules.unshift({
+          '規則ID': 'R-' + String(maxNum).padStart(4, '0'), '分類方向': 'Unmatched (未對應/待確認)',
+          '主機名稱': '未對應清冊主機', '主機IP': '-', '對端IP或主機': `${item.source} -> ${item.destination}`,
+          '來源端(Source)': item.source, '目的端(Destination)': item.destination,
+          '開放連接埠(Port)': item.port, '狀態': item.status, '用途與申請說明': item.purpose, '來源檔案名稱': item.fileName, '自訂備註': item.note, '最後異動時間': nowStr
+        });
+      }
+    });
+    uploadModal.hide();
+    renderAll();
+    await saveToGitHub();
+    alert(`成功匯入 ${appState.parsedUploadQueue.length} 筆規則並已同步至雲端！`);
+  }
+</script>
+</body>
+</html>
